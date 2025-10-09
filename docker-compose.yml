@@ -1,0 +1,42 @@
+services:
+  email-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: email-provisioning-api
+    ports:
+      - "8002:8000"
+    environment:
+      # DirectAdmin Configuration
+      - DIRECTADMIN_HOST=${DIRECTADMIN_HOST}
+      - DIRECTADMIN_USER=${DIRECTADMIN_USER}
+      - DIRECTADMIN_KEY=${DIRECTADMIN_KEY}
+      - DEFAULT_DOMAIN=${DEFAULT_DOMAIN}
+
+      # Database
+      - DATABASE_URL=sqlite:////app/data/email.db
+
+      # JWT Authentication
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
+
+      # Default Admin User
+      - DEFAULT_ADMIN_EMAIL=${DEFAULT_ADMIN_EMAIL}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+
+    volumes:
+      # Persist SQLite database
+      - email-db:/app/data
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  email-db:
+    name: email_provisioning_db

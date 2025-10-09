@@ -1,0 +1,589 @@
+---
+product: Email Provisioning API
+version: "1.0.0"
+status: planning
+owner: sosany
+created: 2025-10-03
+
+principles:
+  jeremy_howard:
+    - id: P1
+      name: "Start with working code"
+      description: "Single file first, refactor into modules only when necessary"
+    - id: P2
+      name: "Minimal dependencies"
+      description: "Add libraries only when standard library insufficient"
+    - id: P3
+      name: "Progressive disclosure"
+      description: "Build in phases, each phase adds one capability"
+    - id: P4
+      name: "Sensible defaults"
+      description: "Zero config for common use cases"
+
+phases:
+  - id: PHASE_1
+    name: "Core CRUD (No Auth)"
+    status: pending
+    description: "Get basic email operations working with DirectAdmin"
+    dependencies: []
+    deliverables:
+      - DirectAdmin API client
+      - Database models
+      - CRUD endpoints
+      - Basic tests
+
+  - id: PHASE_2
+    name: "Add Authentication"
+    status: pending
+    description: "JWT-based auth with user management"
+    dependencies: [PHASE_1]
+    deliverables:
+      - User model
+      - Login/register endpoints
+      - JWT middleware
+      - Password hashing
+
+  - id: PHASE_3
+    name: "Role-Based Access Control"
+    status: pending
+    description: "Scope domain admins to their domains"
+    dependencies: [PHASE_2]
+    deliverables:
+      - Role enum
+      - Permission decorators
+      - Domain scoping logic
+      - Admin endpoints
+
+  - id: PHASE_4
+    name: "React UI"
+    status: roadmap
+    description: "Simple dashboard for email management"
+    dependencies: [PHASE_3]
+    deliverables:
+      - Login page
+      - Email list view
+      - Create/delete forms
+      - Password change modal
+
+  - id: PHASE_5
+    name: "MCP Server"
+    status: roadmap
+    description: "AI-assisted email management"
+    dependencies: [PHASE_3]
+    deliverables:
+      - MCP server wrapper
+      - Tool definitions
+      - Documentation
+
+components:
+  - id: C1
+    name: DirectAdmin Client
+    type: integration
+    phase: PHASE_1
+    dependencies: []
+    files:
+      - email/api/client.py
+    responsibilities:
+      - "HTTP client for DirectAdmin API"
+      - "Handle URL-encoded responses"
+      - "Retry logic for network failures"
+
+  - id: C2
+    name: Database Layer
+    type: persistence
+    phase: PHASE_1
+    dependencies: []
+    files:
+      - email/api/database.py
+      - email/api/models.py
+    responsibilities:
+      - "SQLite connection management"
+      - "SQLModel schema definitions"
+      - "Database migrations (Alembic)"
+
+  - id: C3
+    name: API Endpoints
+    type: application
+    phase: PHASE_1
+    dependencies: [C1, C2]
+    files:
+      - email/api/main.py
+    responsibilities:
+      - "REST API routes"
+      - "Request validation"
+      - "Error handling"
+      - "Sync DB with DirectAdmin"
+
+  - id: C4
+    name: Authentication
+    type: security
+    phase: PHASE_2
+    dependencies: [C2, C3]
+    files:
+      - email/api/auth.py
+    responsibilities:
+      - "JWT token generation/validation"
+      - "Password hashing (bcrypt)"
+      - "Login/logout endpoints"
+
+  - id: C5
+    name: Authorization
+    type: security
+    phase: PHASE_3
+    dependencies: [C4]
+    files:
+      - email/api/permissions.py
+    responsibilities:
+      - "Role-based access control"
+      - "Domain scoping for domain_admin"
+      - "Permission decorators"
+
+features:
+  - id: F1
+    name: List Email Accounts
+    component: C3
+    phase: PHASE_1
+    priority: P0
+    dependencies: [C1, C2]
+    acceptance_criteria:
+      - "GET /emails returns all email accounts for domain"
+      - "Response includes username, quota, created_at"
+      - "Sync with DirectAdmin on every call"
+    traceability:
+      requirements: [R1, R2]
+      tests: [T1]
+
+  - id: F2
+    name: Create Email Account
+    component: C3
+    phase: PHASE_1
+    priority: P0
+    dependencies: [C1, C2]
+    acceptance_criteria:
+      - "POST /emails creates account in DirectAdmin"
+      - "Validates password strength (min 8 chars, mixed case, number)"
+      - "Returns 409 if email already exists"
+      - "Saves to DB after DirectAdmin confirms"
+    traceability:
+      requirements: [R3, R4]
+      tests: [T2, T3]
+
+  - id: F3
+    name: Delete Email Account
+    component: C3
+    phase: PHASE_1
+    priority: P0
+    dependencies: [C1, C2]
+    acceptance_criteria:
+      - "DELETE /emails/{username} removes from DirectAdmin"
+      - "Soft delete in DB (set deleted_at)"
+      - "Returns 404 if email doesn't exist"
+    traceability:
+      requirements: [R5]
+      tests: [T4]
+
+  - id: F4
+    name: Change Email Password
+    component: C3
+    phase: PHASE_1
+    priority: P0
+    dependencies: [C1]
+    acceptance_criteria:
+      - "PUT /emails/{username}/password updates in DirectAdmin"
+      - "Validates password strength"
+      - "Logs password change event"
+    traceability:
+      requirements: [R6]
+      tests: [T5]
+
+  - id: F5
+    name: User Authentication
+    component: C4
+    phase: PHASE_2
+    priority: P1
+    dependencies: [C2]
+    acceptance_criteria:
+      - "POST /auth/login returns JWT token"
+      - "POST /auth/register creates new user"
+      - "Tokens expire after 24 hours"
+      - "Refresh token endpoint available"
+    traceability:
+      requirements: [R7, R8]
+      tests: [T6, T7]
+
+  - id: F6
+    name: Role-Based Access
+    component: C5
+    phase: PHASE_3
+    priority: P1
+    dependencies: [C4]
+    acceptance_criteria:
+      - "domain_admin can only manage emails for their domain"
+      - "admin can manage all domains"
+      - "Unauthorized access returns 403"
+      - "Role included in JWT claims"
+    traceability:
+      requirements: [R9, R10]
+      tests: [T8, T9]
+
+requirements:
+  - id: R1
+    description: "System must list all email accounts for a given domain"
+    type: functional
+    priority: must_have
+
+  - id: R2
+    description: "Email list must sync with DirectAdmin API on each request"
+    type: functional
+    priority: must_have
+
+  - id: R3
+    description: "System must create email accounts via DirectAdmin API"
+    type: functional
+    priority: must_have
+
+  - id: R4
+    description: "Password must meet minimum security requirements"
+    type: non_functional
+    priority: must_have
+
+  - id: R5
+    description: "System must delete email accounts from DirectAdmin"
+    type: functional
+    priority: must_have
+
+  - id: R6
+    description: "System must allow password changes for existing emails"
+    type: functional
+    priority: must_have
+
+  - id: R7
+    description: "Users must authenticate before accessing API"
+    type: security
+    priority: must_have
+
+  - id: R8
+    description: "Passwords must be hashed using bcrypt"
+    type: security
+    priority: must_have
+
+  - id: R9
+    description: "Domain admins scoped to single domain only"
+    type: security
+    priority: must_have
+
+  - id: R10
+    description: "Admin users can manage all domains"
+    type: functional
+    priority: must_have
+
+tests:
+  - id: T1
+    name: "Test list emails endpoint"
+    type: integration
+    feature: F1
+    file: email/tests/test_api.py
+
+  - id: T2
+    name: "Test create email success"
+    type: integration
+    feature: F2
+    file: email/tests/test_api.py
+
+  - id: T3
+    name: "Test create email with duplicate username"
+    type: integration
+    feature: F2
+    file: email/tests/test_api.py
+
+  - id: T4
+    name: "Test delete email"
+    type: integration
+    feature: F3
+    file: email/tests/test_api.py
+
+  - id: T5
+    name: "Test password change"
+    type: integration
+    feature: F4
+    file: email/tests/test_api.py
+
+  - id: T6
+    name: "Test user login"
+    type: integration
+    feature: F5
+    file: email/tests/test_auth.py
+
+  - id: T7
+    name: "Test token expiration"
+    type: integration
+    feature: F5
+    file: email/tests/test_auth.py
+
+  - id: T8
+    name: "Test domain_admin can only access their domain"
+    type: integration
+    feature: F6
+    file: email/tests/test_permissions.py
+
+  - id: T9
+    name: "Test admin can access all domains"
+    type: integration
+    feature: F6
+    file: email/tests/test_permissions.py
+
+data_models:
+  - id: M1
+    name: User
+    type: sqlmodel
+    phase: PHASE_2
+    fields:
+      - name: id
+        type: int
+        primary_key: true
+
+      - name: email
+        type: str
+        unique: true
+        nullable: false
+
+      - name: hashed_password
+        type: str
+        nullable: false
+
+      - name: role
+        type: enum
+        values: [admin, domain_admin, user]
+        default: domain_admin
+
+      - name: domain
+        type: str
+        nullable: true
+        description: "Assigned domain for domain_admin role"
+
+      - name: is_active
+        type: bool
+        default: true
+
+      - name: created_at
+        type: datetime
+        default: now()
+
+      - name: updated_at
+        type: datetime
+        default: now()
+        on_update: now()
+
+  - id: M2
+    name: EmailAccount
+    type: sqlmodel
+    phase: PHASE_1
+    fields:
+      - name: id
+        type: int
+        primary_key: true
+
+      - name: username
+        type: str
+        nullable: false
+        index: true
+
+      - name: domain
+        type: str
+        nullable: false
+        index: true
+
+      - name: quota_mb
+        type: int
+        default: 1000
+        description: "Email quota in megabytes"
+
+      - name: created_by_user_id
+        type: int
+        foreign_key: user.id
+        nullable: true
+
+      - name: created_at
+        type: datetime
+        default: now()
+
+      - name: updated_at
+        type: datetime
+        default: now()
+        on_update: now()
+
+      - name: deleted_at
+        type: datetime
+        nullable: true
+        description: "Soft delete timestamp"
+
+    constraints:
+      - type: unique
+        fields: [username, domain]
+
+api_endpoints:
+  - id: E1
+    path: /emails
+    method: GET
+    feature: F1
+    phase: PHASE_1
+    auth_required: false
+    request: null
+    response:
+      type: list
+      model: EmailAccount
+    errors:
+      - code: 500
+        description: "DirectAdmin API error"
+
+  - id: E2
+    path: /emails
+    method: POST
+    feature: F2
+    phase: PHASE_1
+    auth_required: false
+    request:
+      username: str
+      password: str
+      quota_mb: int (optional, default=1000)
+    response:
+      type: object
+      model: EmailAccount
+    errors:
+      - code: 400
+        description: "Invalid password (too weak)"
+      - code: 409
+        description: "Email already exists"
+      - code: 500
+        description: "DirectAdmin API error"
+
+  - id: E3
+    path: /emails/{username}
+    method: DELETE
+    feature: F3
+    phase: PHASE_1
+    auth_required: false
+    request: null
+    response:
+      type: object
+      message: "Email deleted successfully"
+    errors:
+      - code: 404
+        description: "Email not found"
+      - code: 500
+        description: "DirectAdmin API error"
+
+  - id: E4
+    path: /emails/{username}/password
+    method: PUT
+    feature: F4
+    phase: PHASE_1
+    auth_required: false
+    request:
+      new_password: str
+    response:
+      type: object
+      message: "Password updated successfully"
+    errors:
+      - code: 400
+        description: "Invalid password (too weak)"
+      - code: 404
+        description: "Email not found"
+      - code: 500
+        description: "DirectAdmin API error"
+
+  - id: E5
+    path: /auth/login
+    method: POST
+    feature: F5
+    phase: PHASE_2
+    auth_required: false
+    request:
+      email: str
+      password: str
+    response:
+      access_token: str
+      token_type: str (always "bearer")
+      expires_in: int (seconds)
+    errors:
+      - code: 401
+        description: "Invalid credentials"
+
+  - id: E6
+    path: /auth/register
+    method: POST
+    feature: F5
+    phase: PHASE_2
+    auth_required: false
+    request:
+      email: str
+      password: str
+      role: str (optional, default="domain_admin")
+      domain: str (required if role=domain_admin)
+    response:
+      type: object
+      model: User
+    errors:
+      - code: 400
+        description: "Invalid input"
+      - code: 409
+        description: "Email already registered"
+
+deployment:
+  environment:
+    - name: DIRECTADMIN_HOST
+      required: true
+      example: "https://london.mxroute.com:2222"
+
+    - name: DIRECTADMIN_USER
+      required: true
+      example: "akilyxco"
+
+    - name: DIRECTADMIN_KEY
+      required: true
+      secret: true
+
+    - name: DEFAULT_DOMAIN
+      required: true
+      example: "xseller.io"
+
+    - name: JWT_SECRET
+      required: true
+      secret: true
+      auto_generate: true
+
+    - name: DATABASE_URL
+      required: false
+      default: "sqlite:///./email.db"
+
+  startup:
+    - "Create database if not exists"
+    - "Run migrations"
+    - "Create default admin user if DB empty"
+    - "Start FastAPI on port 8000"
+
+metrics:
+  - name: "API Response Time"
+    target: "< 500ms (p95)"
+
+  - name: "DirectAdmin API Success Rate"
+    target: "> 99%"
+
+  - name: "Test Coverage"
+    target: "> 80%"
+
+  - name: "Uptime"
+    target: "> 99.9%"
+
+risks:
+  - id: RISK_1
+    description: "DirectAdmin API rate limiting"
+    mitigation: "Implement caching layer for read operations"
+
+  - id: RISK_2
+    description: "DirectAdmin API changes breaking integration"
+    mitigation: "Pin to specific API version, add integration tests"
+
+  - id: RISK_3
+    description: "Database schema changes requiring migration"
+    mitigation: "Use Alembic for versioned migrations"
