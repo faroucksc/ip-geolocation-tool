@@ -1,13 +1,25 @@
 """FastAPI application for email management."""
+import logging
 import os
 import re
+import secrets
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Annotated
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Configure templates
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 from .auth import (
     JWT_EXPIRE_MINUTES,
@@ -18,12 +30,14 @@ from .auth import (
 )
 from .client import DirectAdminClient, DirectAdminError
 from .database import create_db_and_tables, create_default_admin, get_session
+from .email_service import email_service
 from .models import (
     ChangePasswordRequest,
     CreateEmailRequest,
     EmailAccount,
     EmailAccountResponse,
     LoginRequest,
+    PasswordResetToken,
     RegisterRequest,
     TokenResponse,
     UpdateUserRoleRequest,
@@ -174,12 +188,37 @@ def register(
         hashed_password=hash_password(request.password),
         role=request.role,
         domain=request.domain,
+        recovery_email=request.recovery_email,
+        must_change_password=request.must_change_password,
         is_active=True,
     )
 
     session.add(new_user)
     session.commit()
     session.refresh(new_user)
+
+    # Generate reset token if password change required
+    reset_token = None
+    if request.must_change_password and request.recovery_email:
+        try:
+            reset_token = email_service.generate_reset_token(new_user.id, session)
+        except Exception as e:
+            logger.error(f"Failed to generate reset token: {e}", exc_info=True)
+
+    # Send welcome email if recovery_email provided
+    if request.recovery_email:
+        try:
+            email_service.send_user_credentials(
+                to_email=request.recovery_email,
+                login_email=new_user.email,
+                password=request.password,
+                role=new_user.role.value,
+                must_change_password=new_user.must_change_password,
+                reset_token=reset_token,
+            )
+        except Exception as e:
+            # Log error but don't fail user creation
+            logger.error(f"Failed to send welcome email: {e}", exc_info=True)
 
     return new_user
 
@@ -194,6 +233,175 @@ def get_current_user_info(
     Requires valid JWT token in Authorization header.
     """
     return current_user
+
+
+@app.post("/auth/change-password")
+def change_password(
+    request: ChangePasswordRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_session)],
+):
+    """
+    Change current user's password.
+
+    Requires valid JWT token. User must provide current password for verification.
+    """
+    # Verify current password
+    if not verify_password(request.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+
+    # Validate new password strength
+    validate_password(request.new_password)
+
+    # Update password
+    current_user.hashed_password = hash_password(request.new_password)
+    current_user.must_change_password = False
+    current_user.updated_at = datetime.utcnow()
+
+    session.add(current_user)
+    session.commit()
+
+    return {"message": "Password changed successfully"}
+
+
+@app.get("/reset-password", response_class=HTMLResponse)
+def get_reset_password_form(
+    token: str,
+    request: Request,
+    session: Annotated[Session, Depends(get_session)],
+):
+    """
+    Serve password reset HTML form.
+
+    Validates token and displays form if valid.
+    """
+    # Find token in database
+    statement = select(PasswordResetToken).where(PasswordResetToken.token == token)
+    reset_token = session.exec(statement).first()
+
+    # Validate token
+    if not reset_token:
+        return templates.TemplateResponse(
+            "reset_error.html",
+            {"request": request, "title": "Invalid Link", "message": "This password reset link is invalid. Please contact your administrator."}
+        )
+
+    if reset_token.used:
+        return templates.TemplateResponse(
+            "reset_error.html",
+            {"request": request, "title": "Link Already Used", "message": "This password reset link has already been used. Please contact your administrator if you need a new link."}
+        )
+
+    if datetime.utcnow() > reset_token.expires_at:
+        return templates.TemplateResponse(
+            "reset_error.html",
+            {"request": request, "title": "Link Expired", "message": "This password reset link has expired. Please contact your administrator for a new link."}
+        )
+
+    # Token valid - show form
+    return templates.TemplateResponse(
+        "reset_password.html",
+        {"request": request, "token": token, "error": None}
+    )
+
+
+@app.post("/reset-password", response_class=HTMLResponse)
+def process_reset_password(
+    request: Request,
+    token: Annotated[str, Form()],
+    new_password: Annotated[str, Form()],
+    confirm_password: Annotated[str, Form()],
+    session: Annotated[Session, Depends(get_session)],
+):
+    """
+    Process password reset form submission.
+
+    Validates passwords, updates user, and redirects to webmail.
+    """
+    # Find token
+    statement = select(PasswordResetToken).where(PasswordResetToken.token == token)
+    reset_token = session.exec(statement).first()
+
+    # Validate token (same checks as GET)
+    if not reset_token or reset_token.used or datetime.utcnow() > reset_token.expires_at:
+        return templates.TemplateResponse(
+            "reset_error.html",
+            {"request": request, "title": "Invalid Request", "message": "This password reset link is no longer valid."}
+        )
+
+    # Validate passwords match
+    if new_password != confirm_password:
+        return templates.TemplateResponse(
+            "reset_password.html",
+            {"request": request, "token": token, "error": "Passwords do not match"}
+        )
+
+    # Validate password strength
+    try:
+        validate_password(new_password)
+    except HTTPException as e:
+        return templates.TemplateResponse(
+            "reset_password.html",
+            {"request": request, "token": token, "error": e.detail}
+        )
+
+    # Get user
+    statement = select(User).where(User.id == reset_token.user_id)
+    user = session.exec(statement).first()
+
+    if not user:
+        return templates.TemplateResponse(
+            "reset_error.html",
+            {"request": request, "title": "User Not Found", "message": "Associated user account not found."}
+        )
+
+    # Update password in database
+    user.hashed_password = hash_password(new_password)
+    user.must_change_password = False
+    user.updated_at = datetime.utcnow()
+
+    # Check if email account exists in DirectAdmin and update password there too
+    if user.domain:
+        try:
+            username = user.email.split('@')[0]
+            domain = user.email.split('@')[1]
+
+            # Check if email account exists in our database
+            email_statement = select(EmailAccount).where(
+                EmailAccount.username == username,
+                EmailAccount.domain == domain,
+                EmailAccount.deleted_at.is_(None)
+            )
+            email_account = session.exec(email_statement).first()
+
+            if email_account:
+                # Update DirectAdmin password
+                client = get_da_client(domain)
+                client.change_password(username, new_password, email_account.quota_mb)
+                logger.info(f"Also updated DirectAdmin password for email {user.email}")
+        except Exception as e:
+            # Don't fail password reset if DirectAdmin update fails
+            logger.warning(f"Failed to update DirectAdmin password for {user.email}: {e}")
+
+    # Mark token as used
+    reset_token.used = True
+
+    session.add(user)
+    session.add(reset_token)
+    session.commit()
+
+    logger.info(f"Password reset successful for user {user.email}")
+
+    # Redirect to webmail (use domain-specific webmail URL)
+    domain = user.email.split('@')[1] if '@' in user.email else os.getenv("DEFAULT_DOMAIN", "xseller.io")
+    webmail_url = os.getenv("WEBMAIL_URL", f"https://webmail.{domain}")
+    return RedirectResponse(
+        url=f"{webmail_url}?message=password_changed",
+        status_code=status.HTTP_302_FOUND
+    )
 
 
 # Email Management Endpoints
@@ -380,6 +588,19 @@ def create_email(
         session.add(db_email)
         session.commit()
         session.refresh(db_email)
+
+        # Send notification email if requested
+        if request.notify_email:
+            try:
+                email_service.send_email_account_credentials(
+                    to_email=request.notify_email,
+                    email_address=f"{request.username}@{effective_domain}",
+                    password=request.password,
+                    quota_mb=request.quota_mb,
+                )
+            except Exception as e:
+                # Log error but don't fail email creation
+                logger.error(f"Failed to send notification email: {e}", exc_info=True)
 
         return db_email
 

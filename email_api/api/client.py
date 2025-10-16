@@ -197,13 +197,14 @@ class DirectAdminClient:
 
         return True
 
-    def change_password(self, username: str, new_password: str) -> bool:
+    def change_password(self, username: str, new_password: str, quota_mb: int = 1000) -> bool:
         """
-        Change email account password.
+        Change email account password (admin operation).
 
         Args:
             username: Email username (without @domain)
             new_password: New password
+            quota_mb: Email quota in megabytes (required for modify action)
 
         Returns:
             True if password change successful
@@ -212,12 +213,14 @@ class DirectAdminClient:
             DirectAdminError: If password change fails
         """
         self._make_request(
-            "CMD_CHANGE_EMAIL_PASSWORD",
+            "CMD_API_POP",
             params={
-                "email": username,
+                "action": "modify",
                 "domain": self.domain,
+                "user": username,
                 "passwd": new_password,
                 "passwd2": new_password,
+                "quota": quota_mb,
             },
         )
 

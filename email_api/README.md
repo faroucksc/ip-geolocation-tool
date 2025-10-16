@@ -7,12 +7,15 @@ FastAPI-based REST API for managing email accounts via DirectAdmin. Built for do
 - ✅ JWT-based authentication
 - ✅ User registration and login
 - ✅ Role-based user management (admin, domain_admin, user)
+- ✅ Password reset flow with email notifications
 - ✅ List all email accounts
 - ✅ Create new email accounts with password validation
 - ✅ Delete email accounts (soft delete in DB)
-- ✅ Change email passwords
+- ✅ Change email passwords (syncs DB + DirectAdmin)
 - ✅ Automatic sync with DirectAdmin
+- ✅ SMTP email notifications
 - ✅ SQLite database for audit trail
+- ✅ Docker deployment ready
 - ✅ Comprehensive test coverage (31 tests)
 
 ## Quick Start

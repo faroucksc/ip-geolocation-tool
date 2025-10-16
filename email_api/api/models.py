@@ -25,9 +25,23 @@ class User(SQLModel, table=True):
     hashed_password: str = Field(nullable=False)
     role: UserRole = Field(default=UserRole.DOMAIN_ADMIN)
     domain: Optional[str] = Field(default=None, description="Assigned domain for domain_admin")
+    recovery_email: Optional[str] = Field(default=None, description="Recovery email for password reset and notifications")
+    must_change_password: bool = Field(default=False, description="User must change password on next login")
     is_active: bool = Field(default=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PasswordResetToken(SQLModel, table=True):
+    """Password reset token database model."""
+
+    __tablename__ = "password_reset_tokens"
+
+    token: str = Field(primary_key=True)
+    user_id: int = Field(foreign_key="users.id", nullable=False)
+    expires_at: datetime = Field(nullable=False)
+    used: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
     class Config:
         """SQLModel config."""
@@ -97,6 +111,7 @@ class CreateEmailRequest(SQLModel):
     password: str = Field(min_length=8)
     quota_mb: int = Field(default=1000, ge=1, le=50000)
     domain: Optional[str] = Field(default=None, description="Target domain (admin only)")
+    notify_email: Optional[str] = Field(default=None, description="Email address to send account credentials to")
 
     class Config:
         """Pydantic config."""
@@ -114,6 +129,7 @@ class CreateEmailRequest(SQLModel):
 class ChangePasswordRequest(SQLModel):
     """Request model for changing password."""
 
+    current_password: str = Field(min_length=1)
     new_password: str = Field(min_length=8)
 
     class Config:
@@ -121,6 +137,7 @@ class ChangePasswordRequest(SQLModel):
 
         json_schema_extra = {
             "example": {
+                "current_password": "OldPass123!",
                 "new_password": "NewSecurePass456!",
             }
         }
@@ -164,6 +181,8 @@ class RegisterRequest(SQLModel):
     password: str = Field(min_length=8)
     role: UserRole = Field(default=UserRole.DOMAIN_ADMIN)
     domain: Optional[str] = Field(default=None)
+    recovery_email: Optional[str] = Field(default=None, description="Recovery email for notifications and password reset")
+    must_change_password: bool = Field(default=False, description="Require password change on first login")
 
     class Config:
         """Pydantic config."""
