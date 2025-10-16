@@ -50,7 +50,9 @@ class EmailService:
             msg.attach(MIMEText(body, "plain"))
 
             server = smtplib.SMTP(self.smtp_host, self.smtp_port)
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(self.smtp_username, self.smtp_password)
             server.send_message(msg)
             server.quit()
